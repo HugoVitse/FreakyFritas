@@ -1,4 +1,4 @@
-opencv-python
+opencv-python-headless
 pillow
 pytesseract
 openai
@@ -7,7 +7,8 @@ uvicorn
 python-multipart
 python-dotenv
 paddleocr
-
+mistralai
+openpyxl
 # Note: Tesseract OCR engine must be installed on the system separately.
 # On Debian/Ubuntu: sudo apt install tesseract-ocr
 # On Arch: sudo pacman -S tesseract

@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  ocr-backend:
+    # dns:
+    # - 8.8.8.8
+    # - 8.8.4.4
+    build:
+      context: .
+      dockerfile: Dockerfile
+      network: host
+    container_name: etiquettes-ocr-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./Data:/app/Data
+      - ./captures:/app/captures
+      - ./.env:/app/.env:ro
+    restart: unless-stopped
+#     networks:
+#       - etiquettes-network
+
+# networks:
+#   etiquettes-network:
+#     driver: bridge

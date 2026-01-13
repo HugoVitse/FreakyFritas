@@ -32,26 +32,30 @@ def parse_with_llm(text: str, model: str = None) -> Dict[str, Optional[str]]:
         "À partir du texte OCR fourni, extrayez et normalisez les champs réglementaires demandés ci-dessous. "
         "Corrigez les erreurs d'OCR (espaces, ponctuation, caractères confondus). "
         " Déduire la valeur la plus probable si c'est pas trop extrapolé "
-        "Si le text OCR est vide, retournez un objet JSON avec les champs obligatoires et les valeurs null. "
+        "Si le text OCR est vide, retournez un objet JSON avec les champs obligatoires et les valeurs None. "
         "Retournez UNIQUEMENT un objet JSON valide (aucune explication). "
-        "Utilisez des noms de champs en anglais en minuscules (snake_case) et mettez null si absent. "
-        "Champs à trouver (mettre null si non trouvé) (snake_case) :\n"
+        "Utilisez des noms de champs en anglais en minuscules (snake_case) et mettez None si absent. "
+        "Champs à trouver (mettre None si non trouvé) (snake_case) :\n"
         "- packer_name_address : identité de l'emballeur/expéditeur — nom et adresse complète (rue, ville, pays)\n"
-        "- packer_iso_code : code d'identification officiel\n"
+        "- packer_iso_code : code d'identification officiel (Soit une suite de 2 lettre ou 3 lettre (exemple FR ou FRA) et rien d'autre)\n"
         "- packed_for_name_address : mention 'Emballé pour' — nom et adresse du vendeur\n"
         "- packed_for_packer_code : code de l'emballeur (exemple le GGN) lié à la mention 'Emballé pour'\n"
-        "- variety : variété ou type commerciale\n"
+        "- variety : variété ou type commerciale, si elle n'est pas présente mettre le nom du produit.\n"
         "- origin : pays d'origine (obligatoire, le traduire en français)\n"
         "- product_name : nom du produit (espèce, obligatoire si non visible, ne pas hésiter à déduire si tu connais déjà la variété par exemple)\n"
         "- category : catégorie commerciale (2 types de valeurs possible : soit 'EXTRA' soit un chiffre (le convertir toujours en chiffre ROMAIN))\n"
+        "- post_product_treatement : traitement post production (traitement chimique appliqué sur les fruits).\n"
+        "- bio : préciser vrai ou faux selon si le produit est bio ou non\n"
         "- calibre : calibre\n"
         "- piece_count : nombre de pièces\n"
         "- net_weight : poids net\n"
-        "- prepacked_net_weights : poids nets si préemballé (liste ou valeur)\n"
+        "- prepacked : préciser vrai si la mention de préemballage existe sinon mettre faux\n"
         "- traceability_note : mention libre de traçabilité\n"
         "- traceability_code : code de traçabilité explicite (ex: 'Traçabilité : 1234')\n"
+        "- additionals_informations : mentions complémentaires concernant le produit\n"
         "- lots : numéro(s) de lot\n"
         "- intended_use : mention spéciale ('destiné à la transformation' ou 'au don')\n"
+        "- datage_code : code spéciale composé d'une lettre pour  le mois (A= janvier, B = février etc) et d'un nombre pour le jour du mois (K21 = 21 novembre)\n"
         "Vous pouvez également extraire si présents : logistic_platform, store_identifier, delivery_date, internal_product_code, product_label, production_method, packaging, packaging_weight, pcb, pcb_unit.\n"
         "Texte OCR:\n" + text + "\n\nJSON:"
     )
@@ -106,8 +110,12 @@ def parse_with_llm(text: str, model: str = None) -> Dict[str, Optional[str]]:
         'category',
         'calibre',
         'piece_count',
+        'datage_code',
+        'post_product_treatement',
+        'bio',
+        'additionals_informations',
         'net_weight',
-        'prepacked_net_weights',
+        'prepacked',
         'traceability_note',
         'traceability_code',
         'lots',

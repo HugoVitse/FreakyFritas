@@ -1,1199 +1,256 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
-import { StatusBar, StyleSheet, Text, TouchableOpacity, View, ScrollView, TextInput } from 'react-native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
-import * as Haptics from 'expo-haptics';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
+import React, { useState, useCallback, useMemo } from 'react';
+import { StatusBar, SafeAreaView, View, TouchableOpacity, Text } from 'react-native';
+import { useCameraPermissions } from 'expo-camera';
+import {
+  HomeScreen,
+  CameraScreen,
+  BottomControls,
+  DeliveryModal,
+  QuantityInputModal,
+  DeliveryDetailPanel,
+  LabelsDetailPanel,
+  SummaryScreen,
+  PermissionScreen,
+  LandingScreen,
+  LoginScreen,
+} from './src/components';
+import { useCameraLogic, useWorkflow, useModals } from './src/hooks';
+import { appStyles } from './src/styles/appStyles';
+import { ScanResult, DeliveryNote, Mode, FlashMode } from './src/types';
+import { getTotalLabelCounts, getProductKey } from './src/utils/data';
 
-type ParsedFields = {
-  product_name?: string | null;
-  variety?: string | null;
-  calibre?: string | null;
-  category?: string | null;
-  piece_count?: string | number | null;
-  origin?: string | null;
-  lots?: string | null;
-  traceability_code?: string | null;
-  packer_name_address?: string | null;
-  packer_iso_code?: string | null;
-  packed_for_name_address?: string | null;
-  packed_for_packer_code?: string | null;
-  net_weight?: string | null;
-};
-
-type ScanResult = {
-  image: string;
-  raw: string;
-  parsed: ParsedFields;
-  compliance?: {
-    ok: boolean;
-    missing: string[];
-  };
-};
-
-type DeliveryItem = {
-  product_name: string | null;
-  variety: string | null;
-  quantity: number | null;
-  unit: string | null;
-  lot: string | null;
-  origin: string | null;
-};
-
-type DeliveryNote = {
-  shipper_name_address: string | null;
-  shipper_siret: string | null;
-  delivery_note_number: string | null;
-  delivery_date: string | null;
-  recipient_name_address: string | null;
-  recipient_siret: string | null;
-  items: DeliveryItem[];
-};
-
-const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8000';
+type AuthState = 'landing' | 'login' | 'authenticated';
 
 export default function App() {
+  const [authState, setAuthState] = useState<AuthState>('landing');
   const [permission, requestPermission] = useCameraPermissions();
-  const cameraRef = useRef<CameraView | null>(null);
-  const capturingRef = useRef(false);
-
-  const [flash, setFlash] = useState<'on' | 'off'>('off');
-  const [mode, setMode] = useState<'labels' | 'bl'>('bl');
+  const [flash, setFlash] = useState<FlashMode>('off');
+  const [mode, setMode] = useState<Mode>('bl');
+  const [error, setError] = useState<string | null>(null);
   const [lastScan, setLastScan] = useState<ScanResult | null>(null);
   const [history, setHistory] = useState<ScanResult[]>([]);
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
-  const [isCapturing, setIsCapturing] = useState(false);
-  const [uploadingCount, setUploadingCount] = useState(0);
-  const [error, setError] = useState<string | null>(null);
   const [delivery, setDelivery] = useState<DeliveryNote | null>(null);
-  const [labelCounts, setLabelCounts] = useState<Record<string, number>>({});
-  const [blHistory, setBlHistory] = useState<DeliveryNote | null>(null); // Historique de la livraison actuelle en mode BL
-  const [blModalOpen, setBlModalOpen] = useState(false); // Modal pour afficher le BL en détail
-  const [blValidated, setBlValidated] = useState(false); // Indique si le BL a été validé
-  const [quantityModalOpen, setQuantityModalOpen] = useState(false); // Modal pour entrer une quantité manuelle
-  const [quantityModalProduct, setQuantityModalProduct] = useState<string | null>(null); // Produit pour la quantité manuelle
-  const [quantityInput, setQuantityInput] = useState<string>('1'); // Input quantité (string pour faciliter édition)
+  const [blHistory, setBlHistory] = useState<DeliveryNote | null>(null);
 
-  const needPermission = !permission?.granted;
+  const {
+    historyOpen,
+    setHistoryOpen,
+    blModalOpen,
+    setBlModalOpen,
+    quantityModalOpen,
+    quantityModalProduct,
+    quantityInput,
+    setQuantityInput,
+    bottomPanelCollapsed,
+    setBottomPanelCollapsed,
+    expandedIndex,
+    setExpandedIndex,
+    openQuantityModal,
+    closeQuantityModal,
+  } = useModals();
 
-  const permissionView = useMemo(() => {
-    if (!permission) {
-      return (
-        <View style={styles.centered}>
-          <Text style={styles.title}>Chargement des permissions...</Text>
-        </View>
-      );
-    }
+  const { workflowStep, startNewDelivery, goToLabelsScan, goToSummary, finishDelivery } =
+    useWorkflow();
 
-    if (needPermission) {
-      return (
-        <View style={styles.centered}>
-          <Text style={styles.title}>Autorisez l’accès à la caméra</Text>
-          <TouchableOpacity style={styles.primaryButton} onPress={requestPermission}>
-            <Text style={styles.primaryButtonText}>Autoriser</Text>
-          </TouchableOpacity>
-        </View>
-      );
-    }
-
-    return null;
-  }, [needPermission, permission, requestPermission]);
-
-  const uploadLabel = useCallback(async (photoBase64: string, filename: string) => {
-    setUploadingCount((c) => c + 1);
-    setError(null);
-    try {
-      const payload = {
-        image_base64: photoBase64,
-        filename,
-        use_paddle: true,
-        use_llm: true, // backend avec OPENAI_API_KEY
-      };
-
-      const endpoint = `${API_URL}/scan`;
-      console.log('API call ->', endpoint);
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        const msg = await res.text();
-        console.error('API error', res.status, msg);
-        throw new Error(msg || `Erreur HTTP ${res.status}`);
-      }
-
-      const data = (await res.json()) as { parsed?: ParsedFields; image?: string; raw?: string };
-      console.log('API success, parsed keys:', Object.keys(data.parsed ?? {}));
-      const parsed = data.parsed ?? {};
-      const missing = [
-        ['product_name', 'Produit'],
-        ['origin', 'Origine'],
-        ['category', 'Catégorie'],
-        ['calibre', 'Calibre'],
-        ['lots', 'Lot'],
-      ]
-        .filter(([key]) => !parsed[key as keyof ParsedFields])
-        .map(([, label]) => label);
-      const compliance = { ok: missing.length === 0, missing };
-      const normalized = {
-        image: data.image ?? '',
-        raw: data.raw ?? '',
-        parsed,
-        compliance,
-      };
-      setLastScan(normalized);
-      setHistory((prev) => [normalized, ...prev].slice(0, 20)); // garde un historique récent
-      const key = (parsed.product_name ?? '').toUpperCase().trim();
-      if (key) {
-        setLabelCounts((prev) => ({
-          ...prev,
-          [key]: (prev[key] ?? 0) + 1,
-        }));
-      }
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    } catch (e: any) {
-      console.error('Upload error', e);
-      setError(e?.message ?? 'Erreur inconnue');
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
-    } finally {
-      setUploadingCount((c) => Math.max(0, c - 1));
-    }
-  }, []);
-
-  const uploadDelivery = useCallback(async (photoBase64: string, filename: string) => {
-    setUploadingCount((c) => c + 1);
-    setError(null);
-    try {
-      const payload = {
-        image_base64: photoBase64,
-        filename,
-        use_llm: true,
-        use_paddle: true, // Utilise PaddleOCR pour BL
-      };
-
-      const endpoint = `${API_URL}/scan-bl`;
-      console.log('API call BL ->', endpoint);
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        const msg = await res.text();
-        console.error('API error BL', res.status, msg);
-        throw new Error(msg || `Erreur HTTP ${res.status}`);
-      }
-
-      const data = (await res.json()) as { parsed?: DeliveryNote; raw?: string };
-      console.log('API BL success, items:', data.parsed?.items?.length ?? 0);
-      const newDelivery = data.parsed ?? {
-        shipper_name_address: null,
-        shipper_siret: null,
-        delivery_note_number: null,
-        delivery_date: null,
-        recipient_name_address: null,
-        recipient_siret: null,
-        items: [],
-      };
-      setDelivery(newDelivery);
-      setBlHistory(newDelivery); // Sauvegarde le BL courant comme historique
-      setLabelCounts({}); // Réinitialise les compteurs des étiquettes scannées
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    } catch (e: any) {
-      console.error('Upload BL error', e);
-      setError(e?.message ?? 'Erreur BL inconnue');
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
-    } finally {
-      setUploadingCount((c) => Math.max(0, c - 1));
-    }
-  }, []);
-
-  const handleValidateBlScan = useCallback(() => {
-    // Fonction appelée quand on valide la fin de scan du BL
-    if (!delivery) return;
-    
-    console.log('BL validation:', {
-      delivery_note_number: delivery.delivery_note_number,
-      total_items: delivery.items.length,
-      label_counts: labelCounts,
+  const { cameraRef, isCapturing, uploadingCount, labelCounts, setLabelCounts, handleCapture } =
+    useCameraLogic({
+      mode,
+      onLabelScanned: (result, counts) => {
+        console.log(result)
+        setLastScan(result);
+        setHistory((prev) => [result, ...prev].slice(0, 20));
+      },
+      onDeliveryScanned: (newDelivery) => {
+        setDelivery(newDelivery);
+        setBlHistory(newDelivery);
+      },
+      onError: setError,
     });
 
-    // Marquer le BL comme validé
-    setBlValidated(true);
-    
-    // Optionnel : on pourrait envoyer un rapport au backend
-    // Pour l'instant, on affiche juste un message
-    setError(null);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    
-    // Attendre un peu avant de fermer la modal
-    setTimeout(() => {
-      setBlModalOpen(false);
-      setError('✅ BL validé ! Prêt pour un nouveau scan.');
-    }, 300);
-  }, [delivery, labelCounts]);
-
   const handleAddQuantity = useCallback(() => {
-    // Fonction pour ajouter une quantité manuelle
     if (!quantityModalProduct) return;
-    
     const qty = parseInt(quantityInput, 10);
     if (isNaN(qty) || qty <= 0) {
       setError('Veuillez entrer une quantité valide');
       return;
     }
-
-    const key = quantityModalProduct.toUpperCase().trim();
+    const key = getProductKey(quantityModalProduct);
     setLabelCounts((prev) => ({
       ...prev,
       [key]: (prev[key] ?? 0) + qty,
     }));
-
-    console.log(`Quantité ajoutée: ${key} +${qty}`);
-    
-    // Haptic feedback
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    
-    // Fermer modal et réinitialiser
-    setQuantityModalOpen(false);
-    setQuantityModalProduct(null);
-    setQuantityInput('1');
+    closeQuantityModal();
     setError(null);
-  }, [quantityModalProduct, quantityInput]);
+  }, [quantityModalProduct, quantityInput, closeQuantityModal]);
 
-  const handleCapture = useCallback(async () => {
-    if (!cameraRef.current || capturingRef.current) return;
+  const handleValidateBlScan = useCallback(() => {
+    if (!delivery) return;
     setError(null);
-    setIsCapturing(true);
-    capturingRef.current = true;
-    try {
-      console.log('Capture: start');
-      const photo = await cameraRef.current.takePictureAsync({
-        base64: true,
-        quality: 1, // meilleure qualité
-        skipProcessing: false, // laisser le post-traitement (sharpen, etc.)
-      });
-      capturingRef.current = false;
-      setIsCapturing(false);
+    setBlModalOpen(false);
+    setTimeout(() => {
+      goToLabelsScan();
+    }, 300);
+  }, [delivery, goToLabelsScan]);
 
-      if (!photo?.base64) {
-        throw new Error('La photo n’a pas pu être encodée en base64.');
+  const handleDecrement = useCallback((key: string) => {
+    setLabelCounts((prev) => {
+      const newCounts = { ...prev };
+      if (newCounts[key] && newCounts[key] > 0) {
+        newCounts[key] -= 1;
       }
+      return newCounts;
+    });
+  }, []);
 
-      console.log('Capture: photo ok, size base64 ~', photo.base64.length);
-      const filenameBase = photo.uri?.split('/').pop() ?? 'capture.jpg';
+  const handleIncrement = useCallback((key: string) => {
+    setLabelCounts((prev) => ({
+      ...prev,
+      [key]: (prev[key] ?? 0) + 1,
+    }));
+  }, []);
 
-      if (mode === 'labels') {
-        // Rogner selon un cadrant central (cadre affiché à l’écran)
-        const cropWidth = photo.width * 0.8;
-        const cropHeight = photo.height * 0.5;
-        const crop = {
-          originX: (photo.width - cropWidth) / 2,
-          originY: (photo.height - cropHeight) / 2,
-          width: cropWidth,
-          height: cropHeight,
-        };
-
-        const cropped = await manipulateAsync(photo.uri, [{ crop }], {
-          compress: 0.95,
-          format: SaveFormat.JPEG,
-          base64: true,
-        });
-
-        if (!cropped.base64) {
-          throw new Error('Le rognage a échoué.');
-        }
-
-        const filename = filenameBase.replace(/\.jpg$/i, '_crop.jpg');
-        // Lancement de l’upload async sans bloquer les prochaines captures
-        uploadLabel(cropped.base64, filename);
-      } else {
-        // Mode BL: on envoie la page complète, sans rognage
-        uploadDelivery(photo.base64, filenameBase);
-      }
-    } catch (e: any) {
-      capturingRef.current = false;
-      setIsCapturing(false);
-      console.error('Capture error', e);
-      setError(e?.message ?? 'Erreur inconnue');
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+  const needPermission = !permission?.granted;
+  const permissionView = useMemo(() => {
+    if (!permission) {
+      return <PermissionScreen loading={true} onRequest={requestPermission} />;
     }
-  }, [mode, uploadDelivery, uploadLabel]);
+    if (needPermission) {
+      return <PermissionScreen loading={false} onRequest={requestPermission} />;
+    }
+    return null;
+  }, [needPermission, permission, requestPermission]);
+
+  // Handle authentication
+  if (authState === 'landing') {
+    return (
+      <LandingScreen
+        onLogin={() => setAuthState('login')}
+        onSignUp={() => setAuthState('login')}
+      />
+    );
+  }
+
+  if (authState === 'login') {
+    return (
+      <LoginScreen
+        onLogin={(username, password) => {
+          // Simple mock authentication
+          if (username && password) {
+            setAuthState('authenticated');
+          }
+        }}
+        onSignUp={() => setAuthState('login')}
+        onBack={() => setAuthState('landing')}
+      />
+    );
+  }
 
   if (permissionView) {
-    return <SafeAreaView style={styles.container}>{permissionView}</SafeAreaView>;
+    return permissionView;
+  }
+
+  if (workflowStep === 'home') {
+    return (
+      <HomeScreen
+        productCount={Object.keys(labelCounts).length}
+        totalColis={getTotalLabelCounts(labelCounts)}
+        onStartNewDelivery={startNewDelivery}
+      />
+    );
+  }
+
+  if (workflowStep === 'summary') {
+    return (
+      <SummaryScreen
+        blHistory={blHistory}
+        labelCounts={labelCounts}
+        onContinueScan={goToLabelsScan}
+        onFinishDelivery={finishDelivery}
+      />
+    );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={appStyles.container}>
       <StatusBar barStyle="light-content" />
-      <View style={styles.cameraWrapper}>
-        <CameraView
-          style={styles.camera}
-          facing="back"
+      <View style={appStyles.cameraWrapper}>
+        <CameraScreen
+          cameraRef={cameraRef}
+          mode={mode}
           flash={flash}
-          ref={(ref) => {
-            cameraRef.current = ref;
-          }}
+          isCapturing={isCapturing}
+          uploadingCount={uploadingCount}
+          onCapture={handleCapture}
         />
-        <View style={styles.overlay}>
-          <Text style={styles.title}>
-            {mode === 'labels' ? 'Photographiez l’étiquette' : 'Photographiez le bon de livraison'}
-          </Text>
-          <Text style={styles.subtitle}>
-            {mode === 'labels'
-              ? 'Placez l’étiquette au centre, évitez le flou'
-              : 'Cadrez la page entière, bien nette'}
-          </Text>
-        </View>
-        {mode === 'labels' && <View style={styles.guideFrame} pointerEvents="none" />}
-        <View style={styles.captureZone}>
-          <TouchableOpacity
-            style={[styles.shutter, (isCapturing || uploadingCount > 0) && styles.shutterDisabled]}
-            onPress={handleCapture}
-            disabled={isCapturing}
-          >
-            <Text style={styles.shutterText}>{isCapturing ? 'CAPTURE...' : 'CAPTURER'}</Text>
-          </TouchableOpacity>
-          {uploadingCount > 0 && (
-            <Text style={styles.uploadingInfo}>Envoi en cours : {uploadingCount}</Text>
+        <View style={appStyles.bottomPanel}>
+          <BottomControls
+            mode={mode}
+            onModeChange={setMode}
+            flash={flash}
+            onFlashChange={() => setFlash((prev) => (prev === 'on' ? 'off' : 'on'))}
+            collapsed={bottomPanelCollapsed}
+            onCollapseChange={setBottomPanelCollapsed}
+            error={error}
+          />
+          {!bottomPanelCollapsed && (
+            <>
+              {delivery && (
+                <DeliveryDetailPanel
+                  delivery={delivery}
+                  labelCounts={labelCounts}
+                  historyOpen={historyOpen}
+                  onToggleHistory={() => setHistoryOpen((v) => !v)}
+                  onOpenModal={() => setBlModalOpen(true)}
+                  onDecrement={handleDecrement}
+                  onAddQuantity={openQuantityModal}
+                />
+              )}
+              {mode === 'labels' && (
+                <>
+                  <LabelsDetailPanel
+                    lastScan={lastScan}
+                    history={history}
+                    labelCounts={labelCounts}
+                    deliveryItems={blHistory?.items ?? []}
+                    historyOpen={historyOpen}
+                    expandedIndex={expandedIndex}
+                    onToggleHistory={() => setHistoryOpen((v) => !v)}
+                    onToggleExpanded={(idx) =>
+                      setExpandedIndex(expandedIndex === idx ? null : idx)
+                    }
+                    onDecrement={handleDecrement}
+                    onIncrement={handleIncrement}
+                    onAddQuantity={openQuantityModal}
+                  />
+                  {workflowStep === 'labels-scan' && history.length > 0 && (
+                    <TouchableOpacity
+                      style={appStyles.goToSummaryButton}
+                      onPress={goToSummary}
+                    >
+                      <Text style={appStyles.goToSummaryButtonText}>✅ Voir Résumé</Text>
+                    </TouchableOpacity>
+                  )}
+                </>
+              )}
+            </>
           )}
         </View>
       </View>
-
-      <View style={styles.bottomPanel}>
-        <View style={styles.row}>
-          <Text style={styles.label}>Mode</Text>
-          <View style={styles.modeSwitch}>
-            <TouchableOpacity
-              style={[styles.modeChip, mode === 'bl' && styles.modeChipActive]}
-              onPress={() => setMode('bl')}
-            >
-              <Text style={styles.modeChipText}>Bon de livraison</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.modeChip, mode === 'labels' && styles.modeChipActive]}
-              onPress={() => setMode('labels')}
-            >
-              <Text style={styles.modeChipText}>Étiquettes</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        <View style={styles.row}>
-          <Text style={styles.label}>Lampe</Text>
-          <TouchableOpacity
-            style={[styles.chip, flash === 'on' && styles.chipActive]}
-            onPress={() => setFlash((prev) => (prev === 'on' ? 'off' : 'on'))}
-          >
-            <Text style={styles.chipText}>{flash === 'on' ? 'Allumée' : 'Éteinte'}</Text>
-          </TouchableOpacity>
-        </View>
-
-        {error && <Text style={styles.error}>{error}</Text>}
-
-        <View style={styles.separator} />
-
-        {delivery && (
-          <TouchableOpacity
-            style={styles.deliveryCard}
-            onPress={() => setBlModalOpen(true)}
-          >
-            <Text style={styles.deliveryTitle}>Bon de livraison courant</Text>
-            <Text style={styles.deliveryMeta}>{delivery.delivery_note_number ?? 'BL sans numéro'}</Text>
-            <Text style={styles.deliveryMeta}>{delivery.shipper_name_address ?? 'Expéditeur inconnu'}</Text>
-            <Text style={styles.deliveryMeta}>{delivery.recipient_name_address ?? 'Destinataire inconnu'}</Text>
-            {delivery.items.slice(0, 4).map((it, idx) => (
-              <Text key={idx} style={styles.deliveryItem}>
-                - {it.product_name || 'Produit'} : {it.quantity ?? '?'} {it.unit ?? ''}
-              </Text>
-            ))}
-            {delivery.items.length > 4 && (
-              <Text style={styles.deliveryMeta}>+ {delivery.items.length - 4} lignes supplémentaires…</Text>
-            )}
-            <Text style={{marginTop: 8, fontStyle: 'italic', color: '#9ca3af', fontSize: 12}}>👆 Appuyez pour voir en détail</Text>
-          </TouchableOpacity>
-        )}
-
-        {mode === 'bl' && blHistory ? (
-          <>
-            <View style={styles.row}>
-              <Text style={styles.label}>Livraison : {blHistory.delivery_note_number ?? 'BL sans numéro'}</Text>
-              <TouchableOpacity onPress={() => setHistoryOpen((v) => !v)}>
-                <Text style={styles.link}>{historyOpen ? 'Réduire' : 'Voir items'}</Text>
-              </TouchableOpacity>
-            </View>
-            {historyOpen && (
-              <View style={styles.historyBox}>
-                <Text style={styles.historyTitle}>Items à scanner</Text>
-                <ScrollView style={styles.historyList} contentContainerStyle={styles.historyContent}>
-                  {blHistory.items.map((item, idx) => {
-                    const key = (item.product_name ?? '').toUpperCase().trim();
-                    const scanned = key ? labelCounts[key] ?? 0 : 0;
-                    const expected = item.quantity ?? 0;
-                    const isOk = scanned >= expected;
-                    return (
-                      <View
-                        key={idx}
-                        style={styles.historyItem}
-                      >
-                        <View style={styles.historyHeader}>
-                          <View style={[styles.badge, isOk ? styles.badgeOk : styles.badgeKo]} />
-                          <Text style={styles.historyProduct}>{item.product_name ?? 'Produit'}</Text>
-                        </View>
-                        <Text style={styles.historyMeta}>
-                          Variété: {item.variety ?? '—'} • Origine: {item.origin ?? '—'}
-                        </Text>
-                        <Text style={styles.historyMeta}>
-                          Lot: {item.lot ?? '—'} • Unité: {item.unit ?? ''}
-                        </Text>
-                        <View style={styles.quantityRow}>
-                          <Text style={[styles.historyMeta, isOk ? {color: '#22c55e'} : {color: '#ef4444'}]}>
-                            Scannées: {scanned} / Attendues: {expected}
-                          </Text>
-                          {key && (
-                            <View style={styles.quantityControls}>
-                              <TouchableOpacity
-                                style={[styles.quantityButton, styles.quantityButtonSmall]}
-                                onPress={() => {
-                                  if (scanned > 0) {
-                                    setLabelCounts((prev) => ({
-                                      ...prev,
-                                      [key]: prev[key] - 1,
-                                    }));
-                                  }
-                                }}
-                              >
-                                <Text style={styles.quantityButtonText}>−</Text>
-                              </TouchableOpacity>
-                              <TouchableOpacity
-                                style={[styles.quantityButton, styles.quantityButtonSmall]}
-                                onPress={() => {
-                                  setQuantityModalProduct(item.product_name);
-                                  setQuantityInput('1');
-                                  setQuantityModalOpen(true);
-                                }}
-                              >
-                                <Text style={styles.quantityButtonText}>+</Text>
-                              </TouchableOpacity>
-                            </View>
-                          )}
-                        </View>
-                      </View>
-                    );
-                  })}
-                </ScrollView>
-              </View>
-            )}
-          </>
-        ) : mode === 'labels' ? (
-          <>
-            <View style={styles.row}>
-              <Text style={styles.label}>Dernier résultat étiquette</Text>
-              <TouchableOpacity onPress={() => setHistoryOpen((v) => !v)}>
-                <Text style={styles.link}>{historyOpen ? 'Réduire' : 'Voir historique'}</Text>
-              </TouchableOpacity>
-            </View>
-            {lastScan ? (
-              <View style={styles.scanCard}>
-                <Text style={styles.scanType}>{lastScan.parsed?.product_name ?? 'Produit inconnu'}</Text>
-                <Text style={styles.scanData}>
-                  Origine: {lastScan.parsed?.origin ?? '—'} · Calibre: {lastScan.parsed?.calibre ?? '—'} · Cat: {lastScan.parsed?.category ?? '—'}
-                </Text>
-                <Text style={styles.scanTime}>Lot: {lastScan.parsed?.lots ?? '—'} · Traçabilité: {lastScan.parsed?.traceability_code ?? '—'}</Text>
-                <View style={styles.complianceRow}>
-                  <View style={[styles.badge, lastScan.compliance?.ok ? styles.badgeOk : styles.badgeKo]} />
-                  <Text style={styles.complianceText}>
-                    {lastScan.compliance?.ok
-                      ? 'Conforme (champs clés présents)'
-                      : `Non conforme : ${lastScan.compliance?.missing.join(', ') || 'champs manquants'}`}
-                  </Text>
-                </View>
-              </View>
-            ) : (
-              <Text style={styles.muted}>Aucun scan pour le moment</Text>
-            )}
-
-            {historyOpen && history.length > 0 && (
-              <View style={styles.historyBox}>
-                <Text style={styles.historyTitle}>Historique</Text>
-                <ScrollView style={styles.historyList} contentContainerStyle={styles.historyContent}>
-                  {history.map((item, idx) => {
-                    const expanded = expandedIndex === idx;
-                    return (
-                      <TouchableOpacity
-                        key={`${item.parsed?.product_name ?? 'prod'}-${idx}`}
-                        style={styles.historyItem}
-                        onPress={() => setExpandedIndex(expanded ? null : idx)}
-                      >
-                        <View style={styles.historyHeader}>
-                          <View style={[styles.badge, item.compliance?.ok ? styles.badgeOk : styles.badgeKo]} />
-                          <Text style={styles.historyProduct}>{item.parsed?.product_name ?? 'Produit'}</Text>
-                        </View>
-                        <Text style={styles.historyMeta}>
-                          Origine {item.parsed?.origin ?? '—'} • Calibre {item.parsed?.calibre ?? '—'} • Cat {item.parsed?.category ?? '—'}
-                        </Text>
-                        <Text style={styles.historyMeta}>Lot {item.parsed?.lots ?? '—'} • Traçabilité {item.parsed?.traceability_code ?? '—'}</Text>
-                        {(() => {
-                          const key = (item.parsed?.product_name ?? '').toUpperCase().trim();
-                          const scanned = key ? labelCounts[key] ?? 0 : 0;
-                          const expected =
-                            delivery?.items?.find(
-                              (it) => it.product_name && it.product_name.toUpperCase().includes(key),
-                            )?.quantity ?? null;
-                          if (!key || expected == null) {
-                            return null;
-                          }
-                          return (
-                            <Text style={styles.historyMeta}>
-                              Étiquettes scannées: {scanned} / {expected}
-                            </Text>
-                          );
-                        })()}
-                        <Text style={styles.historyMeta}>
-                          {item.compliance?.ok
-                            ? 'Conforme'
-                            : `Non conforme : ${item.compliance?.missing.join(', ') || 'champs manquants'}`}
-                        </Text>
-                        {expanded && (
-                          <View style={styles.expandedBox}>
-                            {[
-                              ['Produit', item.parsed?.product_name],
-                              ['Variété', item.parsed?.variety],
-                              ['Origine', item.parsed?.origin],
-                              ['Catégorie', item.parsed?.category],
-                              ['Calibre', item.parsed?.calibre],
-                              ['Nombre', item.parsed?.piece_count],
-                              ['Lot', item.parsed?.lots],
-                              ['Traçabilité', item.parsed?.traceability_code],
-                              ['Poids net', item.parsed?.net_weight],
-                              ['Emballeur', item.parsed?.packer_name_address],
-                              ['Code emballeur', item.parsed?.packer_iso_code],
-                              ['Emballé pour', item.parsed?.packed_for_name_address],
-                            ].map(([label, value]) => (
-                              <Text key={label} style={styles.expandedRow}>
-                                {label}: {value ?? '—'}
-                              </Text>
-                            ))}
-                          </View>
-                        )}
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
-              </View>
-            )}
-          </>
-        ) : null}
-      </View>
-
-      {/* Modal affichage BL détaillé */}
-      {blModalOpen && delivery && (
-        <View style={styles.modalOverlay}>
-          <View style={styles.modal}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Détail du bon de livraison</Text>
-              <TouchableOpacity onPress={() => setBlModalOpen(false)}>
-                <Text style={styles.modalCloseButton}>✕</Text>
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView style={styles.modalContent} contentContainerStyle={styles.modalContentInner}>
-              <View style={styles.modalSection}>
-                <Text style={styles.modalSectionTitle}>Infos générales</Text>
-                <Text style={styles.modalRow}><Text style={styles.modalLabel}>Numéro BL:</Text> {delivery.delivery_note_number ?? '—'}</Text>
-                <Text style={styles.modalRow}><Text style={styles.modalLabel}>Date:</Text> {delivery.delivery_date ?? '—'}</Text>
-              </View>
-
-              <View style={styles.modalSection}>
-                <Text style={styles.modalSectionTitle}>Expéditeur</Text>
-                <Text style={styles.modalRow}>{delivery.shipper_name_address ?? '—'}</Text>
-                <Text style={styles.modalRow}><Text style={styles.modalLabel}>SIRET:</Text> {delivery.shipper_siret ?? '—'}</Text>
-              </View>
-
-              <View style={styles.modalSection}>
-                <Text style={styles.modalSectionTitle}>Destinataire</Text>
-                <Text style={styles.modalRow}>{delivery.recipient_name_address ?? '—'}</Text>
-                <Text style={styles.modalRow}><Text style={styles.modalLabel}>SIRET:</Text> {delivery.recipient_siret ?? '—'}</Text>
-              </View>
-
-              <View style={styles.modalSection}>
-                <Text style={styles.modalSectionTitle}>Items ({delivery.items.length})</Text>
-                {delivery.items.map((item, idx) => {
-                  const key = (item.product_name ?? '').toUpperCase().trim();
-                  const scanned = key ? labelCounts[key] ?? 0 : 0;
-                  const expected = item.quantity ?? 0;
-                  const isOk = scanned >= expected;
-                  return (
-                    <View key={idx} style={[styles.modalItem, isOk && styles.modalItemOk, !isOk && styles.modalItemKo]}>
-                      <View style={styles.modalItemHeader}>
-                        <View style={[styles.badge, isOk ? styles.badgeOk : styles.badgeKo]} />
-                        <Text style={styles.modalItemName}>{item.product_name ?? 'Produit'}</Text>
-                      </View>
-                      <Text style={styles.modalItemDetail}>Variété: {item.variety ?? '—'}</Text>
-                      <Text style={styles.modalItemDetail}>Origine: {item.origin ?? '—'}</Text>
-                      <Text style={styles.modalItemDetail}>Lot: {item.lot ?? '—'}</Text>
-                      <Text style={styles.modalItemDetail}>Unité: {item.unit ?? '—'}</Text>
-                      <Text style={[styles.modalItemDetail, {fontWeight: '600'}]}>
-                        Scannées: {scanned} / Attendues: {expected}
-                      </Text>
-                    </View>
-                  );
-                })}
-              </View>
-            </ScrollView>
-
-            <View style={styles.modalFooter}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalButtonSecondary]}
-                onPress={() => setBlModalOpen(false)}
-              >
-                <Text style={styles.modalButtonText}>Fermer</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalButtonPrimary]}
-                onPress={handleValidateBlScan}
-              >
-                <Text style={[styles.modalButtonText, {fontWeight: '700'}]}>Valider fin de scan</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      )}
-
-      {/* Modal pour entrer une quantité manuelle */}
-      {quantityModalOpen && quantityModalProduct && (
-        <View style={styles.quantityInputModal}>
-          <View style={styles.quantityInputBox}>
-            <Text style={styles.quantityInputTitle}>
-              Quantité pour {quantityModalProduct}
-            </Text>
-            <View>
-              <Text style={styles.quantityInputLabel}>
-                Entrez le nombre de colis scannés :
-              </Text>
-              <TextInput
-                style={styles.quantityInputField}
-                keyboardType="number-pad"
-                placeholder="Ex: 20"
-                placeholderTextColor="#6b7280"
-                value={quantityInput}
-                onChangeText={setQuantityInput}
-                autoFocus
-              />
-            </View>
-            <View style={styles.quantityInputButtons}>
-              <TouchableOpacity
-                style={[styles.quantityInputButton, styles.quantityInputButtonCancel]}
-                onPress={() => {
-                  setQuantityModalOpen(false);
-                  setQuantityModalProduct(null);
-                  setQuantityInput('1');
-                }}
-              >
-                <Text style={styles.quantityInputButtonText}>Annuler</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.quantityInputButton, styles.quantityInputButtonConfirm]}
-                onPress={handleAddQuantity}
-              >
-                <Text style={styles.quantityInputButtonText}>Ajouter</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      )}
+      <DeliveryModal
+        delivery={delivery!}
+        labelCounts={labelCounts}
+        visible={blModalOpen && delivery != null}
+        onClose={() => setBlModalOpen(false)}
+        onValidate={handleValidateBlScan}
+      />
+      <QuantityInputModal
+        visible={quantityModalOpen}
+        productName={quantityModalProduct}
+        quantity={quantityInput}
+        onQuantityChange={setQuantityInput}
+        onConfirm={handleAddQuantity}
+        onCancel={closeQuantityModal}
+      />
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0c0c0f',
-  },
-  cameraWrapper: {
-    flex: 1,
-    position: 'relative',
-  },
-  camera: {
-    flex: 1,
-  },
-  overlay: {
-    position: 'absolute',
-    top: 24,
-    left: 16,
-    right: 16,
-    backgroundColor: 'rgba(0,0,0,0.35)',
-    padding: 12,
-    borderRadius: 12,
-  },
-  guideFrame: {
-    position: 'absolute',
-    top: '25%',
-    left: '10%',
-    right: '10%',
-    height: '50%',
-    borderWidth: 2,
-    borderColor: '#93c5fd',
-    borderRadius: 12,
-    backgroundColor: 'rgba(147,197,253,0.06)',
-  },
-  captureZone: {
-    position: 'absolute',
-    bottom: 24,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-  },
-  shutter: {
-    backgroundColor: '#f8fafc',
-    paddingHorizontal: 28,
-    paddingVertical: 12,
-    borderRadius: 999,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-  shutterDisabled: {
-    opacity: 0.5,
-  },
-  shutterText: {
-    color: '#0c0c0f',
-    fontWeight: '800',
-    letterSpacing: 1,
-  },
-  title: {
-    color: 'white',
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  subtitle: {
-    color: '#d7d7db',
-    marginTop: 4,
-  },
-  bottomPanel: {
-    padding: 16,
-    backgroundColor: '#0c0c0f',
-    borderTopWidth: 1,
-    borderTopColor: '#1c1c20',
-    gap: 8,
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  label: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  chip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: '#1c1c20',
-  },
-  chipActive: {
-    backgroundColor: '#2563eb',
-  },
-  chipText: {
-    color: 'white',
-    fontWeight: '600',
-  },
-  separator: {
-    height: 1,
-    backgroundColor: '#1c1c20',
-    marginVertical: 4,
-  },
-  scanCard: {
-    backgroundColor: '#111118',
-    borderRadius: 12,
-    padding: 12,
-    gap: 4,
-  },
-  scanType: {
-    color: '#93c5fd',
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
-  scanData: {
-    color: 'white',
-    fontSize: 16,
-  },
-  scanTime: {
-    color: '#a1a1aa',
-    fontSize: 12,
-  },
-  muted: {
-    color: '#a1a1aa',
-  },
-  error: {
-    color: '#f87171',
-    fontWeight: '600',
-  },
-  link: {
-    color: '#93c5fd',
-    fontWeight: '600',
-  },
-  centered: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24,
-    gap: 12,
-  },
-  primaryButton: {
-    backgroundColor: '#2563eb',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 10,
-  },
-  primaryButtonText: {
-    color: 'white',
-    fontWeight: '700',
-  },
-  modeSwitch: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  modeChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: '#111118',
-  },
-  modeChipActive: {
-    backgroundColor: '#2563eb',
-  },
-  modeChipText: {
-    color: 'white',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  historyBox: {
-    marginTop: 8,
-    backgroundColor: '#0f172a',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#1c1c20',
-    padding: 10,
-  },
-  historyTitle: {
-    color: 'white',
-    fontWeight: '700',
-    marginBottom: 6,
-  },
-  historyList: {
-    maxHeight: 220,
-  },
-  historyContent: {
-    gap: 8,
-  },
-  historyItem: {
-    backgroundColor: '#111118',
-    borderRadius: 10,
-    padding: 10,
-    gap: 2,
-  },
-  historyHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  historyProduct: {
-    color: 'white',
-    fontWeight: '700',
-  },
-  historyMeta: {
-    color: '#cbd5e1',
-    fontSize: 12,
-  },
-  expandedBox: {
-    marginTop: 6,
-    backgroundColor: '#0f172a',
-    borderRadius: 8,
-    padding: 8,
-    gap: 4,
-  },
-  expandedRow: {
-    color: '#e2e8f0',
-    fontSize: 12,
-  },
-  badge: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-  },
-  badgeOk: {
-    backgroundColor: '#22c55e',
-  },
-  badgeKo: {
-    backgroundColor: '#ef4444',
-  },
-  complianceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 4,
-  },
-  complianceText: {
-    color: '#e2e8f0',
-    fontSize: 12,
-  },
-  uploadingInfo: {
-    color: '#cbd5e1',
-    marginTop: 6,
-    fontSize: 12,
-  },
-  deliveryCard: {
-    marginTop: 8,
-    marginBottom: 4,
-    backgroundColor: '#020617',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#1c1c20',
-    padding: 10,
-    gap: 2,
-  },
-  deliveryTitle: {
-    color: '#e5e7eb',
-    fontWeight: '700',
-    marginBottom: 4,
-  },
-  deliveryMeta: {
-    color: '#9ca3af',
-    fontSize: 12,
-  },
-  deliveryItem: {
-    color: '#e5e7eb',
-    fontSize: 12,
-  },
-  // Styles pour la modal BL
-  modalOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 1000,
-  },
-  modal: {
-    width: '90%',
-    maxHeight: '80%',
-    backgroundColor: '#111118',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#1c1c20',
-    overflow: 'hidden',
-    flexDirection: 'column',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1c1c20',
-    backgroundColor: '#0f0f12',
-  },
-  modalTitle: {
-    color: 'white',
-    fontWeight: '700',
-    fontSize: 16,
-  },
-  modalCloseButton: {
-    color: '#9ca3af',
-    fontSize: 20,
-    fontWeight: '600',
-  },
-  modalContent: {
-    flex: 1,
-  },
-  modalContentInner: {
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    gap: 12,
-  },
-  modalSection: {
-    gap: 6,
-  },
-  modalSectionTitle: {
-    color: '#93c5fd',
-    fontWeight: '700',
-    fontSize: 14,
-    marginBottom: 4,
-  },
-  modalRow: {
-    color: '#e2e8f0',
-    fontSize: 13,
-    paddingVertical: 2,
-  },
-  modalLabel: {
-    fontWeight: '600',
-    color: '#cbd5e1',
-  },
-  modalItem: {
-    backgroundColor: '#0f172a',
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 8,
-    borderLeftWidth: 3,
-    borderLeftColor: '#6b7280',
-  },
-  modalItemOk: {
-    borderLeftColor: '#22c55e',
-  },
-  modalItemKo: {
-    borderLeftColor: '#ef4444',
-  },
-  modalItemHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 6,
-  },
-  modalItemName: {
-    color: 'white',
-    fontWeight: '700',
-    fontSize: 14,
-  },
-  modalItemDetail: {
-    color: '#cbd5e1',
-    fontSize: 12,
-    marginVertical: 2,
-  },
-  modalFooter: {
-    flexDirection: 'row',
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#1c1c20',
-    backgroundColor: '#0f0f12',
-  },
-  modalButton: {
-    flex: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  modalButtonPrimary: {
-    backgroundColor: '#2563eb',
-  },
-  modalButtonSecondary: {
-    backgroundColor: '#374151',
-  },
-  modalButtonText: {
-    color: 'white',
-    fontWeight: '600',
-    fontSize: 13,
-  },
-  // Styles pour les contrôles de quantité
-  quantityRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  quantityControls: {
-    flexDirection: 'row',
-    gap: 6,
-    alignItems: 'center',
-  },
-  quantityButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#2563eb',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  quantityButtonSmall: {
-    width: 32,
-    height: 32,
-  },
-  quantityButtonText: {
-    color: 'white',
-    fontWeight: '700',
-    fontSize: 16,
-  },
-  // Modal quantité manuelle
-  quantityInputModal: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 1001,
-  },
-  quantityInputBox: {
-    width: '80%',
-    backgroundColor: '#111118',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#1c1c20',
-    padding: 20,
-    gap: 16,
-  },
-  quantityInputTitle: {
-    color: 'white',
-    fontWeight: '700',
-    fontSize: 16,
-  },
-  quantityInputLabel: {
-    color: '#cbd5e1',
-    fontSize: 14,
-    marginBottom: 8,
-  },
-  quantityInputField: {
-    borderWidth: 1,
-    borderColor: '#374151',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: '#0f0f12',
-    color: 'white',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  quantityInputButtons: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 8,
-  },
-  quantityInputButton: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  quantityInputButtonCancel: {
-    backgroundColor: '#374151',
-  },
-  quantityInputButtonConfirm: {
-    backgroundColor: '#2563eb',
-  },
-  quantityInputButtonText: {
-    color: 'white',
-    fontWeight: '600',
-    fontSize: 13,
-  },
-});
-

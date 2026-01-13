@@ -1,5 +1,4 @@
 from PIL import Image
-from PIL import Image
 import PIL
 import pytesseract
 import cv2
@@ -8,6 +7,11 @@ from parser import parse_ocr_text
 from typing import Optional
 import argparse
 import os
+from mistralai import Mistral
+import base64
+
+from verif import verif
+
 try:
     from llm_parser import parse_with_llm
 except Exception:
@@ -53,8 +57,14 @@ def thresholding(image):
     return cv2.threshold(image, 100, 230, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
 
 
-def process_single_image(img_path: str, use_ollama: bool = False, use_llm: bool = False, use_doctr: bool = False, use_paddle: bool = False):
-    """Process a single image: OCR + parsing.
+
+def encode_image(image_path):
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode('utf-8')
+
+
+def process_single_image(img_path: str, use_mistral: bool = False, use_ollama: bool = False, use_llm: bool = False, use_doctr: bool = False, use_paddle: bool = False):
+    """Process a single image: OCR + parsing + checks.
 
     Args:
         img_path: path to the image file
@@ -64,7 +74,28 @@ def process_single_image(img_path: str, use_ollama: bool = False, use_llm: bool 
         use_paddle: use PaddleOCR instead of Tesseract
     """
     # OCR Method selection
-    if use_doctr and doctr_ocr is not None:
+    if use_mistral and use_mistral is not None:
+        print(f"\n{'='*70}")
+        print(f"Image: {os.path.basename(img_path)}")
+        print(f"OCR Engine: Mistral")
+        print(f"{'='*70}")
+        api_key = os.environ["MISTRAL_API_KEY"]
+
+        client = Mistral(api_key=api_key)
+
+        base64_image = encode_image(img_path)
+        ocr_response = client.ocr.process(
+            model="mistral-ocr-latest",
+            document={
+                "type": "image_url",
+                "image_url": f"data:image/jpeg;base64,{base64_image}" 
+            },
+            # table_format=None,
+            include_image_base64=True
+        )
+        txt = ocr_response.pages[0].markdown
+        
+    elif use_doctr and doctr_ocr is not None:
         # Use docTR OCR with preprocessing
         print(f"\n{'='*70}")
         print(f"Image: {os.path.basename(img_path)}")
@@ -177,9 +208,13 @@ def process_single_image(img_path: str, use_ollama: bool = False, use_llm: bool 
     
     found = sum(1 for v in parsed.values() if v is not None)
     print(f"\n📊 Fields found: {found}/9")
+
+    v = verif(parsed)
+    print(v)
     
     return {
         'image': os.path.basename(img_path),
+        'errors' : v,
         'raw': txt,
         'parsed': parsed
     }

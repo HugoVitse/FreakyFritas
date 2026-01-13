@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from ocr import process_single_image
 from bl_parser import parse_delivery_note_with_llm
 
+
 load_dotenv()
 
 logging.basicConfig(
@@ -27,6 +28,7 @@ class ScanRequest(BaseModel):
     use_llm: bool = False
     use_ollama: bool = False
     use_doctr: bool = False
+    use_mistral : bool = False
     use_paddle: bool = False
 
 
@@ -89,10 +91,12 @@ def scan_label(req: ScanRequest):
             req.use_ollama,
             req.use_doctr,
             req.use_paddle,
+            req.use_mistral
         )
 
         result = process_single_image(
             tmp_file.name,
+            use_mistral=req.use_mistral,
             use_ollama=req.use_ollama,
             use_llm=req.use_llm,
             use_doctr=req.use_doctr,
@@ -101,6 +105,7 @@ def scan_label(req: ScanRequest):
         logger.info(
             "OCR terminé: image=%s fields_found=%s",
             result.get("image"),
+            result,
             sum(1 for v in result.get("parsed", {}).values() if v),
         )
         return {"success": True, "saved_path": saved_path, **result}

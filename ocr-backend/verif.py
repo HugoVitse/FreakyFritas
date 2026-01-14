@@ -610,9 +610,9 @@ def verif(product_info):  #df_norm_occ,df_calibre,df_categorie,df_pays
                 Erreur.extend(traitement_reglemntaire(product_info,df_traitement,df_norm_occ_filtree) or [])
         
         # Vérification mentions
-        if Mentions is not None and Mentions != "":
-            if "MENTIONS complementaires" in colonnes_reglementaires:
-                Erreur.extend(mentions_reglementaire(product_info,df_mentions,df_norm_occ_filtree) or [])
+        # if Mentions is not None and Mentions != "":
+        #     if "MENTIONS complementaires" in colonnes_reglementaires:
+        #         Erreur.extend(mentions_reglementaire(product_info,df_mentions,df_norm_occ_filtree) or [])
 
 
         # Vérification catégorie

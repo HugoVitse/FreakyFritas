@@ -47,8 +47,8 @@ Champs racine :
 - items : liste de lignes produits
 
 Chaque élément de items doit avoir :
-- product_name : nom du produit (ex: TOMATE, KIWI, POMME)
-- variety : variété ou type si présent
+- product_name : nom du produit, extraire uniquement le nom commun du fruit ou du légume au singulier. Il faut impérativement supprimer toute information relative à la variété, l'origine, le calibre, la quantité, le lot, etc. Exemple : pour 'Pommes Granny Smith', ne garder que 'Pomme'.
+- variety : variété ou type commerciale, ne pas répèter le nom du produit dans ce champ si la variété est trouvée, si elle n'est pas présente mettre le nom du produit, attention à ne pas prendre la mention bio si elle est indiquée (par exemple par les sigles 'AB', 'BIO' ou 'BIOLOGIQUE').
 - quantity : quantité attendue (nombre). Si '3 colis de 10', déduire 3 ou 30 selon ce qui est le plus logique et le préciser dans la structure.
 - unit : uniquement des colis (trouver le nombre de colis par produits sur le BL)
 - lot : numéro de lot s'il est visible sur le BL
@@ -133,6 +133,27 @@ JSON :
         "recipient_siret",
     ]:
         parsed.setdefault(key, None)
+
+    # Print parsing results
+    print("\n" + "="*60)
+    print("RÉSULTATS DU PARSING DU BON DE LIVRAISON")
+    print("="*60)
+    
+    if parsed.get("items"):
+        print(f"\nNombre de produits trouvés : {len(parsed['items'])}\n")
+        for idx, item in enumerate(parsed["items"], 1):
+            print(f"Produit #{idx}:")
+            print(f"  • Nom du produit : {item.get('product_name', 'N/A')}")
+            print(f"  • Variété        : {item.get('variety', 'N/A')}")
+            print(f"  • Quantité       : {item.get('quantity', 'N/A')}")
+            print(f"  • Unité          : {item.get('unit', 'N/A')}")
+            print(f"  • Lot            : {item.get('lot', 'N/A')}")
+            print(f"  • Origine        : {item.get('origin', 'N/A')}")
+            print()
+    else:
+        print("\nAucun produit trouvé dans le bon de livraison.\n")
+    
+    print("="*60 + "\n")
 
     return parsed
 

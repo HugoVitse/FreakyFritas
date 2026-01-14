@@ -222,7 +222,7 @@ export const LabelsDetailPanel: React.FC<LabelsDetailPanelProps> = ({
                         ['Code de datage', item.parsed?.datage_code],
                         ['Poids net', item.parsed?.net_weight],
                         ['Emballeur', item.parsed?.packer_name_address],
-                        ['Code emballeur', item.parsed?.packer_iso_code],
+                        ['Code emballeur', item.parsed?.packed_for_packer_code],
                         ["Emballé pour", item.parsed?.packed_for_name_address],
                       ].map(([label, value]) => (
                         <Text key={label} style={appStyles.expandedRow}>

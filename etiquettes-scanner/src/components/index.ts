@@ -9,3 +9,4 @@ export { SummaryScreen } from './SummaryScreen';
 export { PermissionScreen } from './PermissionScreen';
 export { LandingScreen } from './LandingScreen';
 export { LoginScreen } from './LoginScreen';
+export { UserHeader } from './UserHeader';

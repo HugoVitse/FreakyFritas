@@ -13,6 +13,7 @@ import {
   PermissionScreen,
   LandingScreen,
   LoginScreen,
+  UserHeader,
 } from './src/components';
 import { useCameraLogic, useWorkflow, useModals } from './src/hooks';
 import { appStyles } from './src/styles/appStyles';
@@ -21,8 +22,14 @@ import { getTotalLabelCounts, getProductKey } from './src/utils/data';
 
 type AuthState = 'landing' | 'login' | 'authenticated';
 
+interface UserSession {
+  email: string;
+  domain: string;
+}
+
 export default function App() {
   const [authState, setAuthState] = useState<AuthState>('landing');
+  const [userSession, setUserSession] = useState<UserSession | null>(null);
   const [permission, requestPermission] = useCameraPermissions();
   const [flash, setFlash] = useState<FlashMode>('off');
   const [mode, setMode] = useState<Mode>('bl');
@@ -125,7 +132,6 @@ export default function App() {
     return (
       <LandingScreen
         onLogin={() => setAuthState('login')}
-        onSignUp={() => setAuthState('login')}
       />
     );
   }
@@ -133,13 +139,10 @@ export default function App() {
   if (authState === 'login') {
     return (
       <LoginScreen
-        onLogin={(username, password) => {
-          // Simple mock authentication
-          if (username && password) {
-            setAuthState('authenticated');
-          }
+        onLogin={(email, domain) => {
+          setUserSession({ email, domain });
+          setAuthState('authenticated');
         }}
-        onSignUp={() => setAuthState('login')}
         onBack={() => setAuthState('landing')}
       />
     );
@@ -173,6 +176,20 @@ export default function App() {
   return (
     <SafeAreaView style={appStyles.container}>
       <StatusBar barStyle="light-content" />
+      {userSession && (
+        <UserHeader
+          email={userSession.email}
+          domain={userSession.domain}
+          onLogout={() => {
+            setUserSession(null);
+            setAuthState('landing');
+            setDelivery(null);
+            setBlHistory(null);
+            setHistory([]);
+            setLabelCounts({});
+          }}
+        />
+      )}
       <View style={appStyles.cameraWrapper}>
         <CameraScreen
           cameraRef={cameraRef}

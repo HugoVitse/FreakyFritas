@@ -50,7 +50,7 @@ Chaque élément de items doit avoir :
 - product_name : nom du produit (ex: TOMATE, KIWI, POMME)
 - variety : variété ou type si présent
 - quantity : quantité attendue (nombre). Si '3 colis de 10', déduire 3 ou 30 selon ce qui est le plus logique et le préciser dans la structure.
-- unit : unité associée à quantity (ex: colis, caisses, KG, pièces)
+- unit : uniquement des colis (trouver le nombre de colis par produits sur le BL)
 - lot : numéro de lot s'il est visible sur le BL
 - origin : pays d'origine si indiqué sur le BL ou déductible sans trop extrapoler
 

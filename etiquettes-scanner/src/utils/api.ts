@@ -1,6 +1,29 @@
 import { API_URL, OCR_CONFIG, REQUIRED_FIELDS } from './config';
 import { ParsedFields, ScanResult, DeliveryNote } from '../types';
 
+export async function loginUser(email: string): Promise<{ user_id: number; email: string; domain: string; full_name?: string }> {
+  const endpoint = `${API_URL}/auth/login`;
+  console.log('Auth call ->', endpoint);
+
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+
+  if (!res.ok) {
+    const msg = await res.text();
+    console.error('Auth error', res.status, msg);
+    throw new Error(msg || `Erreur HTTP ${res.status}`);
+  }
+
+  const data = await res.json();
+  if (!data.success) {
+    throw new Error('Authentification échouée');
+  }
+  return data;
+}
+
 export async function uploadLabel(
   photoBase64: string,
   filename: string

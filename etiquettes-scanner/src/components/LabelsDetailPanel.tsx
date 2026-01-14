@@ -65,7 +65,7 @@ export const LabelsDetailPanel: React.FC<LabelsDetailPanelProps> = ({
             <View
               style={[
                 appStyles.badge,
-                lastScan.compliance?.ok
+                lastScan.errors?.length == 0
                   ? appStyles.badgeOk
                   : appStyles.badgeKo,
               ]}
@@ -150,7 +150,7 @@ export const LabelsDetailPanel: React.FC<LabelsDetailPanelProps> = ({
                     <View
                       style={[
                         appStyles.badge,
-                        item.compliance?.ok
+                        item.errors?.length == 0
                           ? appStyles.badgeOk
                           : appStyles.badgeKo,
                       ]}

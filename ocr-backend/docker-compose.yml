@@ -1,10 +1,30 @@
 version: '3.8'
 
 services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: etiquettes-postgres
+    environment:
+      POSTGRES_USER: etiquettes
+      POSTGRES_PASSWORD: etiquettes_secure_pwd
+      POSTGRES_DB: etiquettes_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
+      - ../database/triggers.sql:/docker-entrypoint-initdb.d/02_triggers.sql
+      - ../database/03_seed.sql:/docker-entrypoint-initdb.d/03_seed.sql
+    restart: unless-stopped
+    networks:
+      - etiquettes-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U etiquettes"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   ocr-backend:
-    # dns:
-    # - 8.8.8.8
-    # - 8.8.4.4
     build:
       context: .
       dockerfile: Dockerfile
@@ -14,14 +34,21 @@ services:
       - "8000:8000"
     environment:
       - PYTHONUNBUFFERED=1
+      - DATABASE_URL=postgresql://etiquettes:etiquettes_secure_pwd@postgres:5432/etiquettes_db
     volumes:
       - ./Data:/app/Data
       - ./captures:/app/captures
       - ./.env:/app/.env:ro
     restart: unless-stopped
-#     networks:
-#       - etiquettes-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - etiquettes-network
 
-# networks:
-#   etiquettes-network:
-#     driver: bridge
+volumes:
+  postgres_data:
+
+networks:
+  etiquettes-network:
+    driver: bridge

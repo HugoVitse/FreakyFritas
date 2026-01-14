@@ -240,6 +240,7 @@ export const appStyles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
+    paddingBottom: 64, // Space for Android navigation bar
   },
   cameraWrapper: {
     flex: 1,

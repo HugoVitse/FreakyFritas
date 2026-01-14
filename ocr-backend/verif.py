@@ -128,41 +128,16 @@ def champs_reglementaires_excel(df_norm_occ_filtree):
 
 def calibre_reglemntaire(product_info,df_calibre,df_norm_occ_filtree):
     Erreur = []
+    
+    calibre = product_info.get("calibre")
 
-    # Récupérer la valeur de la colonne "CODE CALIBRE"
-    if not df_norm_occ_filtree.empty:
-        code_calibre = df_norm_occ_filtree['CODE CALIBRE'].iloc[0]
-        #print("Code calibre :", code_calibre)
-        
-        # Vérifier que code_calibre n'est pas vide
-        if pd.notna(code_calibre) and str(code_calibre).strip() != "":
-            # Filtrer df_calibre
-            df_calibre_filtre = df_calibre[
-                df_calibre['ID Calibre'] == code_calibre
-            ]
-            if not df_calibre_filtre.empty:
-                resultat_calibre = verif_calibre(product_info, df_calibre_filtre)
-                #print("Résultat vérification calibre :", resultat_calibre)
-                if resultat_calibre == "REGLEMENTAIRE":
-                    return []
-                else :
-                    Erreur.append("Calibre non réglementaire")
-                    return Erreur
-            else:
-                #print("Aucune ligne trouvée dans df_calibre pour ce code calibre")
-                Erreur.append("Calibre ID non trouvé dans les règles")
-                return Erreur
+    if calibre :
 
-        else:
-            #print("CODE CALIBRE vide ou invalide")
-            Erreur.append("CODE CALIBRE vide ou invalide")
-            return Erreur
-     
+        return Erreur
 
     else:
-        #print("Aucune ligne trouvée pour cette famille / sous-famille")
-        Erreur.append("Calibre : Aucune ligne trouvée pour cette famille / sous-famille")
-        return Erreur
+        
+        return Erreur.append("Calibre manquant")
     
 
 def verif_calibre(product_info, df_calibre_filtre):

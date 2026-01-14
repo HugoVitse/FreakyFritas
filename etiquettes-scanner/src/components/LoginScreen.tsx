@@ -8,30 +8,63 @@ import {
   StatusBar,
   StyleSheet,
   ScrollView,
+  ActivityIndicator,
 } from 'react-native';
+import { appStyles } from '../styles/appStyles';
+import { loginUser } from '../utils/api';
+
+const colors = {
+  primary: '#7c3aed',
+  background: '#ffffff',
+  surfaceLight: '#f3f3f5',
+  textDark: '#030213',
+  textLight: '#717182',
+  border: '#e5e7eb',
+  borderLight: '#f3f4f6',
+};
 
 interface LoginScreenProps {
-  onLogin: (username: string, password: string) => void;
+  onLogin: (email: string, domain: string) => void;
   onBack: () => void;
+  onSignUp?: () => void;
 }
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({
   onLogin,
   onBack,
+  onSignUp,
 }) => {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
+  const [email, setEmail] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleLogin = () => {
-    if (username.trim() && password.trim()) {
-      onLogin(username, password);
+  const isValidEmail = (email: string) => {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  };
+
+  const handleLogin = async () => {
+    if (!isValidEmail(email)) {
+      setError('Veuillez entrer une adresse email valide');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const result = await loginUser(email);
+      onLogin(result.email, result.domain);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Impossible de se connecter. Vérifiez votre connexion Internet.');
+      console.error('Login error:', err);
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" />
+    <SafeAreaView style={appStyles.container}>
+      <StatusBar barStyle="dark-content" />
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
@@ -39,66 +72,66 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
         {/* Header */}
         <View style={styles.headerSection}>
           <View style={styles.logoContainer}>
-            <Text style={styles.logo}>📦</Text>
+            <Text style={styles.logo}>�</Text>
           </View>
-          <Text style={styles.headerTitle}>Connexion</Text>
+          <Text style={appStyles.homeTitle}>Connexion</Text>
+          <Text style={styles.subtitle}>
+            Entrez votre adresse email pour vous connecter
+          </Text>
         </View>
+
+        {/* Error Message */}
+        {error && (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        )}
 
         {/* Form Card */}
         <View style={styles.formCard}>
-          {/* Username Field */}
+          {/* Email Field */}
           <View style={styles.fieldContainer}>
-            <Text style={styles.label}>Identifiant</Text>
+            <Text style={styles.label}>Adresse email</Text>
             <TextInput
               style={styles.input}
-              placeholder="Entrez votre identifiant"
+              placeholder="vous@example.com"
               placeholderTextColor={colors.textLight}
-              value={username}
-              onChangeText={setUsername}
+              value={email}
+              onChangeText={(text) => {
+                setEmail(text.toLowerCase());
+                setError(null);
+              }}
               autoCapitalize="none"
+              keyboardType="email-address"
+              editable={!loading}
+              autoComplete="email"
             />
-          </View>
-
-          {/* Password Field */}
-          <View style={styles.fieldContainer}>
-            <Text style={styles.label}>Mot de passe</Text>
-            <View style={styles.passwordContainer}>
-              <TextInput
-                style={styles.passwordInput}
-                placeholder="••••••••"
-                placeholderTextColor={colors.textLight}
-                secureTextEntry={!showPassword}
-                value={password}
-                onChangeText={setPassword}
-              />
-              <TouchableOpacity
-                onPress={() => setShowPassword(!showPassword)}
-                style={styles.eyeButton}
-              >
-                <Text style={styles.eyeIcon}>
-                  {showPassword ? '👁️' : '👁️‍🗨️'}
-                </Text>
-              </TouchableOpacity>
-            </View>
+            {email && (
+              <Text style={styles.domainHint}>
+                Domaine: <Text style={styles.domainValue}>{email.split('@')[1] || '...'}</Text>
+              </Text>
+            )}
           </View>
 
           {/* Login Button */}
           <TouchableOpacity
             style={[
-              styles.loginButton,
-              (!username.trim() || !password.trim()) &&
-                styles.loginButtonDisabled,
+              appStyles.homeButton,
+              (!isValidEmail(email) || loading) && styles.buttonDisabled,
             ]}
             onPress={handleLogin}
-            disabled={!username.trim() || !password.trim()}
+            disabled={!isValidEmail(email) || loading}
           >
-            <Text style={styles.loginButtonText}>Se connecter</Text>
+            {loading ? (
+              <ActivityIndicator color="white" />
+            ) : (
+              <Text style={appStyles.homeButtonText}>Se connecter</Text>
+            )}
           </TouchableOpacity>
         </View>
 
         {/* Footer Links */}
         <View style={styles.footerContainer}>
-          
           <TouchableOpacity onPress={onBack}>
             <Text style={styles.backLink}>← Retour à l'accueil</Text>
           </TouchableOpacity>
@@ -108,20 +141,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   );
 };
 
-const colors = {
-  primary: '#7c3aed',
-  background: '#ffffff',
-  surfaceLight: '#f3f3f5',
-  textDark: '#030213',
-  textLight: '#717182',
-  border: '#e5e7eb',
-};
-
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.surfaceLight,
-  },
   scrollContent: {
     paddingHorizontal: 16,
     paddingVertical: 20,
@@ -136,100 +156,86 @@ const styles = StyleSheet.create({
     width: 60,
     height: 60,
     borderRadius: 16,
-    backgroundColor: colors.background,
+    backgroundColor: colors.surfaceLight,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   logo: {
     fontSize: 36,
   },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: '700' as const,
-    color: colors.textDark,
-    textAlign: 'center' as const,
+  subtitle: {
+    fontSize: 14,
+    color: colors.textLight,
+    textAlign: 'center',
+    marginTop: 12,
   },
   formCard: {
-    backgroundColor: colors.background,
+    backgroundColor: 'white',
     borderRadius: 16,
-    padding: 24,
+    padding: 20,
     marginBottom: 24,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.borderLight,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
   },
   fieldContainer: {
     marginBottom: 20,
   },
   label: {
     fontSize: 14,
-    fontWeight: '600' as const,
-    color: colors.textDark,
+    fontWeight: '600',
+    color: appStyles.textDark,
     marginBottom: 8,
   },
   input: {
+    backgroundColor: colors.surfaceLight,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 12,
-    fontSize: 14,
-    color: colors.textDark,
-    backgroundColor: colors.surfaceLight,
-  },
-  passwordContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 12,
-    backgroundColor: colors.surfaceLight,
-  },
-  passwordInput: {
-    flex: 1,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    fontSize: 14,
-    color: colors.textDark,
-  },
-  eyeButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-  },
-  eyeIcon: {
-    fontSize: 18,
-  },
-  loginButton: {
-    backgroundColor: colors.primary,
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  loginButtonDisabled: {
-    opacity: 0.5,
-  },
-  loginButtonText: {
-    color: 'white',
     fontSize: 16,
-    fontWeight: '700' as const,
+    color: appStyles.textDark,
+  },
+  domainHint: {
+    fontSize: 12,
+    color: colors.textLight,
+    marginTop: 6,
+  },
+  domainValue: {
+    color: colors.primary,
+    fontWeight: '600',
+  },
+  errorBox: {
+    backgroundColor: '#fee2e2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 20,
+  },
+  errorText: {
+    color: '#dc2626',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  buttonDisabled: {
+    opacity: 0.5,
   },
   footerContainer: {
     alignItems: 'center',
     gap: 12,
   },
-  footerText: {
-    fontSize: 14,
-    color: colors.textLight,
-    textAlign: 'center' as const,
-  },
-  footerLink: {
-    color: colors.primary,
-    fontWeight: '600' as const,
-  },
   backLink: {
     fontSize: 14,
-    color: colors.textLight,
-    textAlign: 'center' as const,
+    color: colors.primary,
+    fontWeight: '600',
   },
 });

@@ -9,6 +9,8 @@ python-dotenv
 paddleocr
 mistralai
 openpyxl
+sqlalchemy
+psycopg2-binary
 # Note: Tesseract OCR engine must be installed on the system separately.
 # On Debian/Ubuntu: sudo apt install tesseract-ocr
 # On Arch: sudo pacman -S tesseract

@@ -5,12 +5,14 @@ import tempfile
 from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from ocr import process_single_image
 from bl_parser import parse_delivery_note_with_llm
+from database import get_db, get_or_create_user, User
 
 
 load_dotenv()
@@ -32,6 +34,18 @@ class ScanRequest(BaseModel):
     use_paddle: bool = False
 
 
+class LoginRequest(BaseModel):
+    email: str
+
+
+class AuthResponse(BaseModel):
+    success: bool
+    user_id: int
+    email: str
+    domain: str
+    full_name: Optional[str] = None
+
+
 app = FastAPI(title="Fruit & Veg Label OCR API", version="1.0.0")
 
 app.add_middleware(
@@ -46,6 +60,33 @@ app.add_middleware(
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.post("/auth/login", response_model=AuthResponse)
+def login(req: LoginRequest, db: Session = Depends(get_db)):
+    """
+    Authentifie un utilisateur basé sur son email.
+    Extrait le domaine automatiquement et crée l'utilisateur s'il n'existe pas.
+    """
+    if not req.email or "@" not in req.email:
+        raise HTTPException(status_code=400, detail="Email invalide")
+    
+    try:
+        user = get_or_create_user(req.email, db)
+        domain_name = user.domain.domain_name
+        
+        logger.info(f"Utilisateur connecté: {user.email} (domaine: {domain_name})")
+        
+        return AuthResponse(
+            success=True,
+            user_id=user.id,
+            email=user.email,
+            domain=domain_name,
+            full_name=user.full_name
+        )
+    except Exception as e:
+        logger.exception("Erreur d'authentification")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/scan")
@@ -166,7 +207,8 @@ def scan_delivery_note(req: ScanRequest):
             use_ollama=False,
             use_llm=False,
             use_doctr=req.use_doctr,
-            use_paddle=req.use_paddle or True,  # Force Paddle pour BL par défaut
+            use_paddle=req.use_paddle,
+            use_mistral=req.use_mistral or True
         )
         raw_text = result.get("raw", "")
         try:
